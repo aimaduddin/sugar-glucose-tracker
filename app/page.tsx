@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import {
   CartesianGrid,
@@ -12,6 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { toBlob } from "html-to-image";
 
 type Entry = {
   id: string;
@@ -170,6 +171,10 @@ export default function Home() {
   const [filterCategory, setFilterCategory] = useState<ReadingCategory | "All">("All");
   const [filterStartDate, setFilterStartDate] = useState("");
   const [filterEndDate, setFilterEndDate] = useState("");
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [isCopyingChart, setIsCopyingChart] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle");
+  const [isCopySupported, setIsCopySupported] = useState(false);
   const resetHistoryFilters = () => {
     setSearchTerm("");
     setFilterPeriod("All");
@@ -197,6 +202,19 @@ export default function Home() {
     };
 
     register();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof navigator === "undefined") {
+      return;
+    }
+
+    const clipboardAvailable =
+      "ClipboardItem" in window &&
+      Boolean(navigator.clipboard) &&
+      typeof navigator.clipboard.write === "function";
+
+    setIsCopySupported(clipboardAvailable);
   }, []);
 
   const resetForm = (nextPeriod?: Entry["period"]) => {
@@ -341,6 +359,56 @@ export default function Home() {
   const hasPreMealSeries = chartData.some((point) => typeof point.preMeal === "number");
   const hasPostMealSeries = chartData.some((point) => typeof point.postMeal === "number");
   const shouldShowLegend = hasFastingSeries || hasPreMealSeries || hasPostMealSeries;
+  const copyButtonLabel =
+    copyStatus === "success"
+      ? "Copied!"
+      : copyStatus === "error"
+        ? "Try again"
+        : isCopyingChart
+          ? "Copying…"
+          : "Copy chart image";
+  const copyHelperText =
+    copyStatus === "success"
+      ? "Chart copied to clipboard."
+      : copyStatus === "error"
+        ? "Copy failed. Try again."
+        : !isCopySupported
+          ? "Copying images is unavailable in this browser."
+          : "";
+  const handleCopyChart = useCallback(async () => {
+    if (
+      typeof window === "undefined" ||
+      typeof navigator === "undefined" ||
+      !chartRef.current ||
+      !isCopySupported
+    ) {
+      return;
+    }
+
+    setIsCopyingChart(true);
+    setCopyStatus("idle");
+
+    try {
+      const blob = await toBlob(chartRef.current, {
+        pixelRatio: window.devicePixelRatio || 2,
+        backgroundColor: "#ffffff",
+      });
+
+      if (!blob || typeof ClipboardItem === "undefined") {
+        throw new Error("Unable to capture chart");
+      }
+
+      const clipboardItem = new ClipboardItem({ [blob.type]: blob });
+      await navigator.clipboard.write([clipboardItem]);
+      setCopyStatus("success");
+      window.setTimeout(() => setCopyStatus("idle"), 2500);
+    } catch (error) {
+      console.error("Failed to copy chart", error);
+      setCopyStatus("error");
+    } finally {
+      setIsCopyingChart(false);
+    }
+  }, [chartRef, isCopySupported]);
 
   const filteredEntries = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -769,21 +837,47 @@ export default function Home() {
 
         <section className="grid gap-5 lg:grid-cols-[1.1fr,0.9fr]">
           <div className="rounded-[28px] bg-white p-5 shadow-lg ring-1 ring-black/5 sm:p-6">
-            <header className="flex items-center justify-between text-sm">
+            <header className="flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="uppercase tracking-[0.3em] text-slate-400">Trend comparison</p>
                 <h2 className="mt-1 text-2xl font-semibold text-slate-900">
                   Pre vs post meal averages
                 </h2>
               </div>
-              <span className={`text-sm font-semibold ${averages.trend <= 0 ? "text-emerald-600" : "text-amber-600"}`}>
-                {averages.trend > 0 ? "+" : ""}
-                {averages.trend.toFixed(1)} mmol/L
-              </span>
+              <div className="flex flex-col gap-2 sm:items-end">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className={`text-sm font-semibold ${averages.trend <= 0 ? "text-emerald-600" : "text-amber-600"}`}>
+                    {averages.trend > 0 ? "+" : ""}
+                    {averages.trend.toFixed(1)} mmol/L
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopyChart}
+                    disabled={!chartData.length || !isCopySupported || isCopyingChart}
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-900/60 hover:text-slate-900 disabled:cursor-not-allowed disabled:border-slate-100 disabled:text-slate-300"
+                  >
+                    {copyButtonLabel}
+                  </button>
+                </div>
+                {copyHelperText && (
+                  <span
+                    className={`text-xs ${
+                      copyStatus === "error"
+                        ? "text-rose-600"
+                        : copyStatus === "success"
+                          ? "text-emerald-600"
+                          : "text-slate-500"
+                    }`}
+                    aria-live="polite"
+                  >
+                    {copyHelperText}
+                  </span>
+                )}
+              </div>
             </header>
             <div className="mt-6">
               {chartData.length ? (
-                <div className="relative h-64">
+                <div ref={chartRef} className="relative h-64">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData} margin={{ left: 12, right: 12, top: 24, bottom: 24 }}>
                       <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
