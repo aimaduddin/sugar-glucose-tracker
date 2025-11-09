@@ -117,6 +117,26 @@ export default function Home() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      !("serviceWorker" in navigator) ||
+      process.env.NODE_ENV !== "production"
+    ) {
+      return;
+    }
+
+    const register = async () => {
+      try {
+        await navigator.serviceWorker.register("/sw.js");
+      } catch (error) {
+        console.error("Service worker registration failed", error);
+      }
+    };
+
+    register();
+  }, []);
+
   const resetForm = (nextPeriod?: Entry["period"]) => {
     setForm((prev) => ({
       value: "",
