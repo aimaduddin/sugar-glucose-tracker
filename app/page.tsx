@@ -142,6 +142,7 @@ export default function Home() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     if (
@@ -314,6 +315,60 @@ export default function Home() {
     });
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
+
+  const handleExportCsv = () => {
+    if (!entries.length || typeof window === "undefined") {
+      if (typeof window !== "undefined" && !entries.length) {
+        window.alert("No readings to export yet.");
+      }
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const toMeridiemTime = (date: Date) => {
+        let hours = date.getHours();
+        const minutes = String(date.getMinutes()).padStart(2, "0");
+        const suffix = hours >= 12 ? "PM" : "AM";
+        hours = hours % 12 || 12;
+        const formattedHours = String(hours).padStart(2, "0");
+        return `${formattedHours}:${minutes} ${suffix}`;
+      };
+
+      const header = ["Reading Date", "Reading Time", "Period", "Value (mmol/L)", "Note"];
+      const rows = sortEntriesByDateDesc(entries).map((entry) => {
+        const date = new Date(entry.date);
+        return [
+          date.toISOString().split("T")[0],
+          toMeridiemTime(date),
+          entry.period,
+          entry.value.toFixed(1),
+          entry.note ?? "",
+        ];
+      });
+
+      const escapeCell = (value: string) => `"${value.replace(/"/g, '""')}"`;
+      const csv = [header, ...rows]
+        .map((row) => row.map((cell) => escapeCell(String(cell ?? ""))).join(","))
+        .join("\r\n");
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `glucose-readings-${timestamp}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Failed to export CSV", error);
+      window.alert("Something went wrong while creating the CSV. Please try again.");
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -713,8 +768,13 @@ export default function Home() {
               <p className="text-xs uppercase tracking-[0.4em] text-slate-400">History</p>
               <h2 className="mt-1 text-2xl font-semibold text-slate-900">Recent entries</h2>
             </div>
-            <button className="text-sm font-semibold text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline">
-              Export CSV
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={!entries.length || isExporting}
+              className="text-sm font-semibold text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline disabled:cursor-not-allowed disabled:text-slate-300"
+            >
+              {isExporting ? "Preparing…" : "Export CSV"}
             </button>
           </header>
           <div className="mt-6 divide-y divide-slate-100">
