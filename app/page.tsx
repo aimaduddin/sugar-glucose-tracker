@@ -977,10 +977,8 @@ export default function Home() {
                       <div className={`flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${periodTheme[entry.period]}`}>
                         {entry.period}
                       </div>
-                      {entry.note ? (
+                      {entry.note && (
                         <p className="text-left text-slate-600 sm:text-right">{entry.note}</p>
-                      ) : (
-                        <span>📝 Add note</span>
                       )}
                     </div>
                     <div className="flex items-center justify-self-end gap-3">
