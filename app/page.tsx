@@ -116,6 +116,27 @@ const formatValue = (value?: number) =>
   typeof value === "number" ? `${(Math.round(value * 10) / 10).toFixed(1)} mmol/L` : "--";
 
 const PAGE_SIZE = 10;
+const TARGET_RANGE = {
+  lowUpper: 4.4,
+  highLower: 7.8,
+} as const;
+
+type ReadingCategory = "low" | "good" | "high";
+
+const readingCategoryTheme: Record<
+  ReadingCategory,
+  { badge: string; label: string }
+> = {
+  low: { badge: "bg-rose-100 text-rose-700", label: "Low" },
+  good: { badge: "bg-emerald-100 text-emerald-700", label: "On target" },
+  high: { badge: "bg-amber-100 text-amber-700", label: "High" },
+};
+
+const getReadingCategory = (value: number): ReadingCategory => {
+  if (value < TARGET_RANGE.lowUpper) return "low";
+  if (value > TARGET_RANGE.highLower) return "high";
+  return "good";
+};
 
 export default function Home() {
   const [entries, setEntries] = useState<Entry[]>(initialEntries);
@@ -144,6 +165,19 @@ export default function Home() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [isExporting, setIsExporting] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterPeriod, setFilterPeriod] = useState<Entry["period"] | "All">("All");
+  const [filterCategory, setFilterCategory] = useState<ReadingCategory | "All">("All");
+  const [filterStartDate, setFilterStartDate] = useState("");
+  const [filterEndDate, setFilterEndDate] = useState("");
+  const resetHistoryFilters = () => {
+    setSearchTerm("");
+    setFilterPeriod("All");
+    setFilterCategory("All");
+    setFilterStartDate("");
+    setFilterEndDate("");
+    setCurrentPage(1);
+  };
 
   useEffect(() => {
     if (
@@ -228,11 +262,6 @@ export default function Home() {
     };
   }, []);
 
-  useEffect(() => {
-    const maxPage = Math.max(1, Math.ceil(entries.length / PAGE_SIZE) || 1);
-    setCurrentPage((prev) => Math.min(prev, maxPage));
-  }, [entries.length]);
-
   const averages = useMemo(() => {
     if (!entries.length) {
       return { average: 0, recent: 0, trend: 0 };
@@ -269,6 +298,57 @@ export default function Home() {
     }));
   }, [entries]);
 
+  const filteredEntries = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+
+    return entries.filter((entry) => {
+      const entryDate = toInputDate(entry.date);
+      if (filterStartDate && entryDate < filterStartDate) {
+        return false;
+      }
+      if (filterEndDate && entryDate > filterEndDate) {
+        return false;
+      }
+
+      if (filterPeriod !== "All" && entry.period !== filterPeriod) {
+        return false;
+      }
+
+      if (filterCategory !== "All" && getReadingCategory(entry.value) !== filterCategory) {
+        return false;
+      }
+
+      if (!term) {
+        return true;
+      }
+
+      const date = new Date(entry.date);
+      const dateString = date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+      const timeString = date.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      });
+      const fields = [
+        entry.period,
+        entry.note ?? "",
+        entry.value.toString(),
+        dateString,
+        timeString,
+      ];
+
+      return fields.some((field) => field.toLowerCase().includes(term));
+    });
+  }, [entries, searchTerm, filterStartDate, filterEndDate, filterPeriod, filterCategory]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filteredEntries.length / PAGE_SIZE) || 1);
+    setCurrentPage((prev) => Math.min(prev, maxPage));
+  }, [filteredEntries.length]);
+
   const renderTrendLabel = ({ x, y, value }: LabelProps) => {
     const numericX = typeof x === "number" ? x : typeof x === "string" ? Number(x) : undefined;
     const numericY = typeof y === "number" ? y : typeof y === "string" ? Number(y) : undefined;
@@ -297,13 +377,15 @@ export default function Home() {
     );
   };
 
-  const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE) || 1);
+  const totalPages = Math.max(1, Math.ceil(filteredEntries.length / PAGE_SIZE) || 1);
   const paginatedEntries = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
-    return entries.slice(start, start + PAGE_SIZE);
-  }, [entries, currentPage]);
-  const startIndex = entries.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
-  const endIndex = entries.length ? Math.min(entries.length, currentPage * PAGE_SIZE) : 0;
+    return filteredEntries.slice(start, start + PAGE_SIZE);
+  }, [filteredEntries, currentPage]);
+  const startIndex = filteredEntries.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
+  const endIndex = filteredEntries.length
+    ? Math.min(filteredEntries.length, currentPage * PAGE_SIZE)
+    : 0;
 
   const startEditing = (entry: Entry) => {
     setEditingId(entry.id);
@@ -321,9 +403,9 @@ export default function Home() {
   };
 
   const handleExportCsv = () => {
-    if (!entries.length || typeof window === "undefined") {
-      if (typeof window !== "undefined" && !entries.length) {
-        window.alert("No readings to export yet.");
+    if (!filteredEntries.length || typeof window === "undefined") {
+      if (typeof window !== "undefined" && !filteredEntries.length) {
+        window.alert("No readings match your filters yet.");
       }
       return;
     }
@@ -340,7 +422,7 @@ export default function Home() {
       };
 
       const header = ["Reading Date", "Reading Time", "Period", "Value (mmol/L)", "Note"];
-      const rows = sortEntriesByDateDesc(entries).map((entry) => {
+      const rows = sortEntriesByDateDesc(filteredEntries).map((entry) => {
         const date = new Date(entry.date);
         return [
           date.toISOString().split("T")[0],
@@ -770,62 +852,163 @@ export default function Home() {
               <p className="text-xs uppercase tracking-[0.4em] text-slate-400">History</p>
               <h2 className="mt-1 text-2xl font-semibold text-slate-900">Recent entries</h2>
             </div>
-            <button
-              type="button"
-              onClick={handleExportCsv}
-              disabled={!entries.length || isExporting}
-              className="text-sm font-semibold text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline disabled:cursor-not-allowed disabled:text-slate-300"
-            >
-              {isExporting ? "Preparing…" : "Export CSV"}
-            </button>
           </header>
+          <div className="mt-4 space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(event) => {
+                  setSearchTerm(event.target.value);
+                  setCurrentPage(1);
+                }}
+                placeholder="Search readings…"
+                className="w-full rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 sm:w-64"
+              />
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                disabled={!filteredEntries.length || isExporting}
+                className="text-sm font-semibold text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline disabled:cursor-not-allowed disabled:text-slate-300"
+              >
+                {isExporting ? "Preparing…" : "Export CSV"}
+              </button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="flex flex-col text-sm font-medium text-slate-600">
+                From
+                <input
+                  type="date"
+                  value={filterStartDate}
+                  onChange={(event) => {
+                    setFilterStartDate(event.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="mt-1 rounded-2xl border border-slate-200 px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                />
+              </label>
+              <label className="flex flex-col text-sm font-medium text-slate-600">
+                To
+                <input
+                  type="date"
+                  value={filterEndDate}
+                  onChange={(event) => {
+                    setFilterEndDate(event.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="mt-1 rounded-2xl border border-slate-200 px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                />
+              </label>
+              <label className="flex flex-col text-sm font-medium text-slate-600">
+                Period
+                <select
+                  value={filterPeriod}
+                  onChange={(event) => {
+                    setFilterPeriod(event.target.value as Entry["period"] | "All");
+                    setCurrentPage(1);
+                  }}
+                  className="mt-1 rounded-2xl border border-slate-200 px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                >
+                  <option value="All">All periods</option>
+                  {allowedPeriods.map((period) => (
+                    <option key={period} value={period}>
+                      {period}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col text-sm font-medium text-slate-600">
+                Reading quality
+                <select
+                  value={filterCategory}
+                  onChange={(event) => {
+                    setFilterCategory(event.target.value as ReadingCategory | "All");
+                    setCurrentPage(1);
+                  }}
+                  className="mt-1 rounded-2xl border border-slate-200 px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                >
+                  <option value="All">All readings</option>
+                  <option value="low">Low (&lt; 4.4 mmol/L)</option>
+                  <option value="good">Good (4.4 - 7.8 mmol/L)</option>
+                  <option value="high">High (&gt; 7.8 mmol/L)</option>
+                </select>
+              </label>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={resetHistoryFilters}
+                className="text-sm font-semibold text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline disabled:cursor-not-allowed disabled:text-slate-300"
+                disabled={
+                  !searchTerm &&
+                  filterPeriod === "All" &&
+                  filterCategory === "All" &&
+                  !filterStartDate &&
+                  !filterEndDate
+                }
+              >
+                Reset filters
+              </button>
+            </div>
+          </div>
           <div className="mt-6 divide-y divide-slate-100">
             {isLoadingEntries ? (
               <p className="py-4 text-sm text-slate-500">Loading latest readings…</p>
-            ) : entries.length ? (
-              paginatedEntries.map((entry) => (
-                <article key={entry.id} className="grid gap-4 py-4 sm:grid-cols-[1.2fr,1fr,auto] sm:items-center">
-                  <div>
-                    <p className="text-sm text-slate-500">{formatter.format(new Date(entry.date))}</p>
-                    <p className="text-2xl font-semibold text-slate-900">{formatValue(entry.value)}</p>
-                  </div>
-                  <div className="flex flex-col gap-2 text-sm text-slate-500 sm:flex-row sm:items-center sm:gap-4">
-                    <div className={`flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${periodTheme[entry.period]}`}>
-                      {entry.period}
-                    </div>
-                    {entry.note ? (
-                      <p className="text-left text-slate-600 sm:text-right">{entry.note}</p>
-                    ) : (
-                      <span>📝 Add note</span>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-self-end gap-3">
-                    <button
-                      type="button"
-                      className="text-sm font-semibold text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
-                      onClick={() => startEditing(entry)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="text-sm font-semibold text-rose-500 underline-offset-4 hover:text-rose-600 hover:underline disabled:opacity-60"
-                      onClick={() => handleDelete(entry)}
-                      disabled={deletingId === entry.id || isSubmitting}
-                    >
-                      {deletingId === entry.id ? "Deleting…" : "Delete"}
-                    </button>
-                  </div>
-                </article>
-              ))
-            ) : (
+            ) : entries.length === 0 ? (
               <p className="py-4 text-sm text-slate-500">No readings yet. Log your first entry above.</p>
+            ) : filteredEntries.length === 0 ? (
+              <p className="py-4 text-sm text-slate-500">No readings match your search.</p>
+            ) : (
+              paginatedEntries.map((entry) => {
+                const category = getReadingCategory(entry.value);
+                const theme = readingCategoryTheme[category];
+                return (
+                  <article key={entry.id} className="grid gap-4 py-4 sm:grid-cols-[1.2fr,1fr,auto] sm:items-center">
+                    <div>
+                      <p className="text-sm text-slate-500">{formatter.format(new Date(entry.date))}</p>
+                      <div className="flex items-baseline gap-3">
+                        <p className="text-2xl font-semibold text-slate-900">{formatValue(entry.value)}</p>
+                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${theme.badge}`}>
+                          {theme.label}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 text-sm text-slate-500 sm:flex-row sm:items-center sm:gap-4">
+                      <div className={`flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${periodTheme[entry.period]}`}>
+                        {entry.period}
+                      </div>
+                      {entry.note ? (
+                        <p className="text-left text-slate-600 sm:text-right">{entry.note}</p>
+                      ) : (
+                        <span>📝 Add note</span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-self-end gap-3">
+                      <button
+                        type="button"
+                        className="text-sm font-semibold text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+                        onClick={() => startEditing(entry)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="text-sm font-semibold text-rose-500 underline-offset-4 hover:text-rose-600 hover:underline disabled:opacity-60"
+                        onClick={() => handleDelete(entry)}
+                        disabled={deletingId === entry.id || isSubmitting}
+                      >
+                        {deletingId === entry.id ? "Deleting…" : "Delete"}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })
             )}
           </div>
-          {!isLoadingEntries && entries.length > 0 && (
+          {!isLoadingEntries && filteredEntries.length > 0 && (
             <div className="mt-4 flex flex-col gap-3 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
               <p>
-                Showing {startIndex}-{endIndex} of {entries.length} readings
+                Showing {startIndex}-{endIndex} of {filteredEntries.length} readings
               </p>
               <div className="flex items-center gap-2">
                 <button
@@ -842,7 +1025,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-                  disabled={currentPage === totalPages || !entries.length}
+                  disabled={currentPage === totalPages || !filteredEntries.length}
                   className="rounded-full border border-slate-200 px-3 py-1 font-semibold text-slate-700 transition hover:border-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Next
