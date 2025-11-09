@@ -11,6 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import type { LabelProps } from "recharts";
 
 type Entry = {
   id: string;
@@ -268,29 +269,30 @@ export default function Home() {
     }));
   }, [entries]);
 
-  const renderTrendLabel = ({
-    x,
-    y,
-    value,
-  }: {
-    x?: number;
-    y?: number;
-    value?: string;
-  }) => {
-    if (typeof x !== "number" || typeof y !== "number" || !value) {
+  const renderTrendLabel = ({ x, y, value }: LabelProps) => {
+    const numericX = typeof x === "number" ? x : typeof x === "string" ? Number(x) : undefined;
+    const numericY = typeof y === "number" ? y : typeof y === "string" ? Number(y) : undefined;
+    const labelValue =
+      typeof value === "string"
+        ? value
+        : typeof value === "number"
+          ? value.toString()
+          : undefined;
+
+    if (typeof numericX !== "number" || typeof numericY !== "number" || !labelValue) {
       return null;
     }
 
     return (
       <text
-        x={x}
-        y={y - 10}
+        x={numericX}
+        y={numericY - 10}
         textAnchor="middle"
         fontSize={10}
         fill="#0f172a"
         fontWeight={600}
       >
-        {value}
+        {labelValue}
       </text>
     );
   };
