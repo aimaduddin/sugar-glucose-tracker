@@ -3,15 +3,15 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import {
-  Area,
-  AreaChart,
-  LabelList,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import type { LabelProps } from "recharts";
 
 type Entry = {
   id: string;
@@ -283,20 +283,64 @@ export default function Home() {
   const lastEntry = entries[0];
 
   const chartData = useMemo(() => {
-    const sorted = [...entries].sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-    );
-    const recent = sorted.slice(-8);
-    return recent.map((entry) => ({
-      value: entry.value,
-      label: new Intl.DateTimeFormat("en", {
-        weekday: "short",
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(new Date(entry.date)),
-      period: entry.period,
-    }));
+    if (!entries.length) {
+      return [];
+    }
+
+    type Bucket = {
+      fasting: number[];
+      preMeal: number[];
+      postMeal: number[];
+    };
+
+    const buckets = new Map<string, Bucket>();
+
+    const ensureBucket = (key: string) => {
+      if (!buckets.has(key)) {
+        buckets.set(key, { fasting: [], preMeal: [], postMeal: [] });
+      }
+      return buckets.get(key)!;
+    };
+
+    entries.forEach((entry) => {
+      const dateKey = toInputDate(entry.date);
+      const bucket = ensureBucket(dateKey);
+
+      if (entry.period === "Fasting") {
+        bucket.fasting.push(entry.value);
+      } else if (entry.period === "Pre-Meal") {
+        bucket.preMeal.push(entry.value);
+      } else {
+        bucket.postMeal.push(entry.value);
+      }
+    });
+
+    const average = (values: number[]) =>
+      values.length
+        ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10
+        : undefined;
+
+    return Array.from(buckets.entries())
+      .sort(
+        (a, b) =>
+          new Date(`${a[0]}T00:00:00`).getTime() - new Date(`${b[0]}T00:00:00`).getTime(),
+      )
+      .slice(-8)
+      .map(([dateKey, bucket]) => ({
+        label: new Intl.DateTimeFormat("en", {
+          month: "short",
+          day: "numeric",
+        }).format(new Date(`${dateKey}T00:00:00`)),
+        fasting: average(bucket.fasting),
+        preMeal: average(bucket.preMeal),
+        postMeal: average(bucket.postMeal),
+      }));
   }, [entries]);
+
+  const hasFastingSeries = chartData.some((point) => typeof point.fasting === "number");
+  const hasPreMealSeries = chartData.some((point) => typeof point.preMeal === "number");
+  const hasPostMealSeries = chartData.some((point) => typeof point.postMeal === "number");
+  const shouldShowLegend = hasFastingSeries || hasPreMealSeries || hasPostMealSeries;
 
   const filteredEntries = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -348,34 +392,6 @@ export default function Home() {
     const maxPage = Math.max(1, Math.ceil(filteredEntries.length / PAGE_SIZE) || 1);
     setCurrentPage((prev) => Math.min(prev, maxPage));
   }, [filteredEntries.length]);
-
-  const renderTrendLabel = ({ x, y, value }: LabelProps) => {
-    const numericX = typeof x === "number" ? x : typeof x === "string" ? Number(x) : undefined;
-    const numericY = typeof y === "number" ? y : typeof y === "string" ? Number(y) : undefined;
-    const labelValue =
-      typeof value === "string"
-        ? value
-        : typeof value === "number"
-          ? value.toString()
-          : undefined;
-
-    if (typeof numericX !== "number" || typeof numericY !== "number" || !labelValue) {
-      return null;
-    }
-
-    return (
-      <text
-        x={numericX}
-        y={numericY - 10}
-        textAnchor="middle"
-        fontSize={10}
-        fill="#0f172a"
-        fontWeight={600}
-      >
-        {labelValue}
-      </text>
-    );
-  };
 
   const totalPages = Math.max(1, Math.ceil(filteredEntries.length / PAGE_SIZE) || 1);
   const paginatedEntries = useMemo(() => {
@@ -755,8 +771,10 @@ export default function Home() {
           <div className="rounded-[28px] bg-white p-5 shadow-lg ring-1 ring-black/5 sm:p-6">
             <header className="flex items-center justify-between text-sm">
               <div>
-                <p className="uppercase tracking-[0.3em] text-slate-400">Trend</p>
-                <h2 className="mt-1 text-2xl font-semibold text-slate-900">Past 7 days</h2>
+                <p className="uppercase tracking-[0.3em] text-slate-400">Trend comparison</p>
+                <h2 className="mt-1 text-2xl font-semibold text-slate-900">
+                  Pre vs post meal averages
+                </h2>
               </div>
               <span className={`text-sm font-semibold ${averages.trend <= 0 ? "text-emerald-600" : "text-amber-600"}`}>
                 {averages.trend > 0 ? "+" : ""}
@@ -765,34 +783,39 @@ export default function Home() {
             </header>
             <div className="mt-6">
               {chartData.length ? (
-                <div className="relative h-48">
+                <div className="relative h-64">
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="trendGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#0f172a" stopOpacity={0.4} />
-                          <stop offset="100%" stopColor="#0f172a" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
+                    <LineChart data={chartData} margin={{ left: 12, right: 12, top: 24, bottom: 24 }}>
+                      <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
                       <XAxis
                         dataKey="label"
-                        tick={{ fontSize: 10, fill: "#475569" }}
-                        stroke="#cbd5f5"
+                        tick={{ fontSize: 12, fill: "#475569" }}
                         tickLine={false}
-                        axisLine={false}
-                        interval="equidistantPreserveStart"
-                        minTickGap={30}
+                        axisLine={{ stroke: "#cbd5f5" }}
+                        minTickGap={20}
+                        padding={{ left: 8, right: 8 }}
+                        label={{
+                          value: "Daily readings",
+                          position: "insideBottom",
+                          offset: -10,
+                          style: { fill: "#475569", fontSize: 12, fontStyle: "italic" },
+                        }}
                       />
                       <YAxis
                         domain={["auto", "auto"]}
-                        tick={{ fontSize: 10, fill: "#94a3b8" }}
-                        stroke="#e2e8f0"
+                        tick={{ fontSize: 12, fill: "#64748b" }}
                         tickLine={false}
-                        axisLine={false}
-                        width={36}
+                        axisLine={{ stroke: "#cbd5f5" }}
+                        width={56}
+                        label={{
+                          value: "Blood sugar (mmol/L)",
+                          angle: -90,
+                          position: "insideLeft",
+                          style: { fill: "#475569", fontSize: 12 },
+                        }}
                       />
                       <Tooltip
-                        cursor={{ stroke: "#94a3b8", strokeDasharray: "3 3" }}
+                        cursor={{ stroke: "#94a3b8", strokeDasharray: "4 4" }}
                         contentStyle={{
                           borderRadius: 12,
                           border: "1px solid #e2e8f0",
@@ -801,20 +824,54 @@ export default function Home() {
                           fontSize: 12,
                           color: "#0f172a",
                         }}
-                        formatter={(value: number) => [`${value.toFixed(1)} mmol/L`, "Reading"]}
+                        formatter={(value: number | string, name: string) => {
+                          const parsed = typeof value === "number" ? value : Number(value);
+                          const safeValue = Number.isFinite(parsed) ? parsed : 0;
+                          return [`${safeValue.toFixed(1)} mmol/L`, name];
+                        }}
                       />
-                      <Area
-                        type="monotone"
-                        dataKey="value"
-                        stroke="#0f172a"
-                        strokeWidth={3}
-                        fill="url(#trendGradient)"
-                        dot={{ r: 3, strokeWidth: 1, stroke: "#0f172a", fill: "#fff" }}
-                        activeDot={{ r: 4 }}
-                      >
-                        <LabelList dataKey="period" content={renderTrendLabel} />
-                      </Area>
-                    </AreaChart>
+                      {shouldShowLegend && (
+                        <Legend
+                          verticalAlign="top"
+                          align="right"
+                          iconType="circle"
+                          wrapperStyle={{ paddingBottom: 16 }}
+                        />
+                      )}
+                      {hasFastingSeries && (
+                        <Line
+                          type="monotone"
+                          name="Fasting"
+                          dataKey="fasting"
+                          stroke="#0f172a"
+                          strokeWidth={2}
+                          dot={{ r: 4, fill: "#fff", strokeWidth: 2, stroke: "#0f172a" }}
+                          activeDot={{ r: 5 }}
+                        />
+                      )}
+                      {hasPreMealSeries && (
+                        <Line
+                          type="monotone"
+                          name="Pre-Meal"
+                          dataKey="preMeal"
+                          stroke="#2563eb"
+                          strokeWidth={3}
+                          dot={{ r: 5, fill: "#fff", strokeWidth: 2, stroke: "#2563eb" }}
+                          activeDot={{ r: 6 }}
+                        />
+                      )}
+                      {hasPostMealSeries && (
+                        <Line
+                          type="monotone"
+                          name="Post-Meal"
+                          dataKey="postMeal"
+                          stroke="#f97316"
+                          strokeWidth={3}
+                          dot={{ r: 5, fill: "#fff", strokeWidth: 2, stroke: "#f97316" }}
+                          activeDot={{ r: 6 }}
+                        />
+                      )}
+                    </LineChart>
                   </ResponsiveContainer>
                 </div>
               ) : (
