@@ -2,6 +2,15 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  Area,
+  AreaChart,
+  LabelList,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 type Entry = {
   id: string;
@@ -79,12 +88,17 @@ const sortEntriesByDateDesc = (list: Entry[]) =>
 
 const toInputDate = (isoString: string) => {
   const date = new Date(isoString);
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 };
 
 const toInputTime = (isoString: string) => {
   const date = new Date(isoString);
-  return date.toISOString().slice(11, 16);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
 };
 
 const getErrorMessage = (error: unknown) => {
@@ -100,15 +114,26 @@ const getErrorMessage = (error: unknown) => {
 const formatValue = (value?: number) =>
   typeof value === "number" ? `${(Math.round(value * 10) / 10).toFixed(1)} mmol/L` : "--";
 
+const PAGE_SIZE = 10;
+
 export default function Home() {
   const [entries, setEntries] = useState<Entry[]>(initialEntries);
-  const [form, setForm] = useState<FormState>({
-    value: "",
-    date: "",
-    time: "",
-    period: "Fasting",
-    includeNote: false,
-    note: "",
+  const [form, setForm] = useState<FormState>(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+
+    return {
+      value: "",
+      date: `${year}-${month}-${day}`,
+      time: `${hours}:${minutes}`,
+      period: "Fasting",
+      includeNote: false,
+      note: "",
+    };
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingEntries, setIsLoadingEntries] = useState(true);
@@ -116,6 +141,7 @@ export default function Home() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     if (
@@ -138,10 +164,17 @@ export default function Home() {
   }, []);
 
   const resetForm = (nextPeriod?: Entry["period"]) => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+
     setForm((prev) => ({
       value: "",
-      date: "",
-      time: "",
+      date: `${year}-${month}-${day}`,
+      time: `${hours}:${minutes}`,
       period: nextPeriod ?? prev.period,
       includeNote: false,
       note: "",
@@ -193,6 +226,11 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(entries.length / PAGE_SIZE) || 1);
+    setCurrentPage((prev) => Math.min(prev, maxPage));
+  }, [entries.length]);
+
   const averages = useMemo(() => {
     if (!entries.length) {
       return { average: 0, recent: 0, trend: 0 };
@@ -225,41 +263,44 @@ export default function Home() {
         hour: "numeric",
         minute: "2-digit",
       }).format(new Date(entry.date)),
+      period: entry.period,
     }));
   }, [entries]);
 
-  const chartStats = useMemo(() => {
-    if (!chartData.length) {
-      return {
-        min: 0,
-        max: 0,
-        range: 1,
-        points: "",
-        baseline: 0,
-      };
+  const renderTrendLabel = ({
+    x,
+    y,
+    value,
+  }: {
+    x?: number;
+    y?: number;
+    value?: string;
+  }) => {
+    if (typeof x !== "number" || typeof y !== "number" || !value) {
+      return null;
     }
-    const values = chartData.map((point) => point.value);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const paddedMin = Math.max(0, min - 0.5);
-    const paddedMax = max + 0.5;
-    const range = paddedMax - paddedMin || 1;
-    const points = chartData
-      .map((point, index) => {
-        const x = (index / Math.max(chartData.length - 1, 1)) * 100;
-        const y = 100 - ((point.value - paddedMin) / range) * 100;
-        return `${x},${y}`;
-      })
-      .join(" ");
 
-    return {
-      min: paddedMin,
-      max: paddedMax,
-      range,
-      baseline: Math.max(0, Math.min(100, 100 - ((6 - paddedMin) / range) * 100)),
-      points,
-    };
-  }, [chartData]);
+    return (
+      <text
+        x={x}
+        y={y - 10}
+        textAnchor="middle"
+        fontSize={10}
+        fill="#0f172a"
+        fontWeight={600}
+      >
+        {value}
+      </text>
+    );
+  };
+
+  const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE) || 1);
+  const paginatedEntries = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return entries.slice(start, start + PAGE_SIZE);
+  }, [entries, currentPage]);
+  const startIndex = entries.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
+  const endIndex = entries.length ? Math.min(entries.length, currentPage * PAGE_SIZE) : 0;
 
   const startEditing = (entry: Entry) => {
     setEditingId(entry.id);
@@ -314,7 +355,8 @@ export default function Home() {
     event.preventDefault();
     if (!form.value || !form.date || !form.time) return;
 
-    const composedDate = `${form.date}T${form.time}`;
+    const localDate = new Date(`${form.date}T${form.time}`);
+    const composedDate = localDate.toISOString();
     const note = form.includeNote && form.note.trim().length > 0 ? form.note.trim() : undefined;
     const entryId =
       editingId ??
@@ -584,53 +626,57 @@ export default function Home() {
             </header>
             <div className="mt-6">
               {chartData.length ? (
-                <div className="relative h-40">
-                  <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full text-slate-900">
-                    <defs>
-                      <linearGradient id="trendFill" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="0%" stopColor="#0f172a" stopOpacity="0.25" />
-                        <stop offset="100%" stopColor="#0f172a" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-                    <polyline
-                      fill="url(#trendFill)"
-                      stroke="none"
-                      points={`0,100 ${chartStats.points} 100,100`}
-                    />
-                    <polyline
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={1.5}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      points={chartStats.points}
-                    />
-                    {chartData.map((point, index) => {
-                      const x = (index / Math.max(chartData.length - 1, 1)) * 100;
-                      const y = Number(
-                        (100 - ((point.value - chartStats.min) / chartStats.range) * 100).toFixed(2),
-                      );
-                      return (
-                        <circle key={`${point.label}-${index}`} cx={x} cy={y} r={1.8} fill="currentColor" />
-                      );
-                    })}
-                    <line
-                      x1="0"
-                      x2="100"
-                      y1={chartStats.baseline}
-                      y2={chartStats.baseline}
-                      stroke="#cbd5f5"
-                      strokeDasharray="2 4"
-                      strokeWidth={1}
-                    />
-                  </svg>
-                  <div className="mt-2 grid grid-cols-4 gap-2 text-xs text-slate-500 sm:grid-cols-8">
-                    {chartData.map((point, index) => (
-                      <span key={`${point.label}-${index}`} className="truncate">
-                        {point.label}
-                      </span>
-                    ))}
-                  </div>
+                <div className="relative h-48">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="trendGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#0f172a" stopOpacity={0.4} />
+                          <stop offset="100%" stopColor="#0f172a" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fontSize: 10, fill: "#475569" }}
+                        stroke="#cbd5f5"
+                        tickLine={false}
+                        axisLine={false}
+                        interval="equidistantPreserveStart"
+                        minTickGap={30}
+                      />
+                      <YAxis
+                        domain={["auto", "auto"]}
+                        tick={{ fontSize: 10, fill: "#94a3b8" }}
+                        stroke="#e2e8f0"
+                        tickLine={false}
+                        axisLine={false}
+                        width={36}
+                      />
+                      <Tooltip
+                        cursor={{ stroke: "#94a3b8", strokeDasharray: "3 3" }}
+                        contentStyle={{
+                          borderRadius: 12,
+                          border: "1px solid #e2e8f0",
+                          boxShadow: "0 10px 40px rgba(15,23,42,0.1)",
+                          background: "white",
+                          fontSize: 12,
+                          color: "#0f172a",
+                        }}
+                        formatter={(value: number) => [`${value.toFixed(1)} mmol/L`, "Reading"]}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="value"
+                        stroke="#0f172a"
+                        strokeWidth={3}
+                        fill="url(#trendGradient)"
+                        dot={{ r: 3, strokeWidth: 1, stroke: "#0f172a", fill: "#fff" }}
+                        activeDot={{ r: 4 }}
+                      >
+                        <LabelList dataKey="period" content={renderTrendLabel} />
+                      </Area>
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </div>
               ) : (
                 <p className="rounded-2xl bg-slate-50 px-4 py-6 text-sm text-slate-500">
@@ -675,7 +721,7 @@ export default function Home() {
             {isLoadingEntries ? (
               <p className="py-4 text-sm text-slate-500">Loading latest readings…</p>
             ) : entries.length ? (
-              entries.map((entry) => (
+              paginatedEntries.map((entry) => (
                 <article key={entry.id} className="grid gap-4 py-4 sm:grid-cols-[1.2fr,1fr,auto] sm:items-center">
                   <div>
                     <p className="text-sm text-slate-500">{formatter.format(new Date(entry.date))}</p>
@@ -690,30 +736,58 @@ export default function Home() {
                     ) : (
                       <span>📝 Add note</span>
                     )}
-                </div>
-                <div className="flex items-center justify-self-end gap-3">
-                  <button
-                    type="button"
-                    className="text-sm font-semibold text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
-                    onClick={() => startEditing(entry)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="text-sm font-semibold text-rose-500 underline-offset-4 hover:text-rose-600 hover:underline disabled:opacity-60"
-                    onClick={() => handleDelete(entry)}
-                    disabled={deletingId === entry.id || isSubmitting}
-                  >
-                    {deletingId === entry.id ? "Deleting…" : "Delete"}
-                  </button>
-                </div>
-              </article>
-            ))
+                  </div>
+                  <div className="flex items-center justify-self-end gap-3">
+                    <button
+                      type="button"
+                      className="text-sm font-semibold text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+                      onClick={() => startEditing(entry)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="text-sm font-semibold text-rose-500 underline-offset-4 hover:text-rose-600 hover:underline disabled:opacity-60"
+                      onClick={() => handleDelete(entry)}
+                      disabled={deletingId === entry.id || isSubmitting}
+                    >
+                      {deletingId === entry.id ? "Deleting…" : "Delete"}
+                    </button>
+                  </div>
+                </article>
+              ))
             ) : (
               <p className="py-4 text-sm text-slate-500">No readings yet. Log your first entry above.</p>
             )}
           </div>
+          {!isLoadingEntries && entries.length > 0 && (
+            <div className="mt-4 flex flex-col gap-3 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+              <p>
+                Showing {startIndex}-{endIndex} of {entries.length} readings
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="rounded-full border border-slate-200 px-3 py-1 font-semibold text-slate-700 transition hover:border-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Prev
+                </button>
+                <span className="px-2">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages || !entries.length}
+                  className="rounded-full border border-slate-200 px-3 py-1 font-semibold text-slate-700 transition hover:border-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </section>
       </main>
     </div>
