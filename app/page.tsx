@@ -158,6 +158,9 @@ export default function Home() {
     let isActive = true;
 
     const fetchEntries = async () => {
+      if (!supabase) {
+        return;
+      }
       setIsLoadingEntries(true);
       try {
         const { data, error } = await supabase
